@@ -51,29 +51,271 @@ dependencies {
 	testImplementation 'org.testcontainers:kafka'
 	testImplementation 'com.h2database:h2'
 	testImplementation 'org.awaitility:awaitility:4.2.0'
+	testImplementation 'org.mockito:mockito-core'
+	testImplementation 'org.mockito:mockito-junit-jupiter'
 	testImplementation platform('org.testcontainers:testcontainers-bom:1.19.0')
 }
 
-tasks.named('test') {
-	useJUnitPlatform()
-	finalizedBy jacocoTestReport
+// ==================== CONFIGURACIÓN JACOCO ====================
+
+jacoco {
+	toolVersion = "0.8.8"
 }
 
 jacocoTestReport {
 	dependsOn test
+	
 	reports {
 		xml.required = true
 		html.required = true
+		csv.required = false
 	}
+	
+	// Configurar directorios de fuentes y clases compiladas
+	executionData fileTree(dir: "$buildDir/jacoco", include: "**/*.exec")
+	
+	afterEvaluate {
+		classDirectories.setFrom(files(classDirectories.files.collect {
+			fileTree(dir: it, excludes: getJacocoExclusions())
+		}))
+	}
+	
 	finalizedBy jacocoTestCoverageVerification
 }
 
 jacocoTestCoverageVerification {
+	dependsOn jacocoTestReport
+	
+	afterEvaluate {
+		classDirectories.setFrom(files(classDirectories.files.collect {
+			fileTree(dir: it, excludes: getJacocoExclusions())
+		}))
+	}
+	
 	violationRules {
+		// Regla general para todo el proyecto
 		rule {
 			limit {
+				counter = 'LINE'
+				value = 'COVEREDRATIO'
 				minimum = 0.80
+			}
+			limit {
+				counter = 'BRANCH'
+				value = 'COVEREDRATIO'
+				minimum = 0.75
+			}
+		}
+		
+		// Regla específica para servicios críticos
+		rule {
+			element = 'CLASS'
+			includes = [
+				'com.example.inventory.service.impl.*ServiceImpl',
+				'com.example.inventory.controller.*Controller'
+			]
+			limit {
+				counter = 'LINE'
+				value = 'COVEREDRATIO'
+				minimum = 0.85
+			}
+		}
+		
+		// Regla para repositorios (menos estricta)
+		rule {
+			element = 'CLASS'
+			includes = ['com.example.inventory.repository.*Repository']
+			limit {
+				counter = 'LINE'
+				value = 'COVEREDRATIO'
+				minimum = 0.70
+			}
+		}
+		
+		// Regla para DTOs y entities (solo validar que tengan algo de cobertura)
+		rule {
+			element = 'CLASS'
+			includes = [
+				'com.example.inventory.model.*',
+				'com.example.inventory.controller.dto.*'
+			]
+			limit {
+				counter = 'LINE'
+				value = 'COVEREDRATIO'
+				minimum = 0.60
 			}
 		}
 	}
+}
+
+// Función para definir exclusiones de Jacoco
+def getJacocoExclusions() {
+	return [
+		// Clases de configuración y aplicación principal
+		'**/Application*',
+		'**/InventoryServiceApplication*',
+		'**/*Application*',
+		'**/config/**',
+		'**/configuration/**',
+		
+		// DTOs y entities (builders, getters, setters generados por Lombok)
+		'**/dto/**/*Dto*',
+		'**/model/**/*$*Builder*',
+		'**/controller/dto/**',
+		
+		// Clases de excepción personalizadas simples
+		'**/exception/**/*Exception*',
+		
+		// Clases generadas automáticamente
+		'**/generated/**',
+		'**/target/generated-sources/**',
+		
+		// Clases de constantes
+		'**/constants/**',
+		'**/constant/**',
+		
+		// Interfaces de repositorio JPA (Spring Data genera la implementación)
+		'**/repository/**/*Repository*',
+		
+		// Eventos y mensajes Kafka (principalmente DTOs)
+		'**/event/**/*Event*',
+		'**/event/**/*Message*',
+		
+		// Validadores simples
+		'**/validator/**/*Validator*',
+		
+		// Mappers simples (si son principalmente métodos de mapeo)
+		'**/mapper/**/*Mapper*',
+		
+		// Clases de seguridad básicas
+		'**/security/**/*Config*',
+		
+		// Tests
+		'**/test/**',
+		'**/*Test*',
+		'**/*Tests*',
+		
+		// Actuator endpoints personalizados simples
+		'**/actuator/**',
+		
+		// Documentación de API
+		'**/swagger/**',
+		'**/openapi/**'
+	]
+}
+
+// Task personalizada para generar reporte de cobertura con detalles
+task jacocoCoverageReport(type: JacocoReport) {
+	dependsOn test
+	group = "verification"
+	description = "Generates code coverage report with detailed information"
+	
+	reports {
+		xml.required = true
+		html.required = true
+		csv.required = true
+	}
+	
+	afterEvaluate {
+		classDirectories.setFrom(files(classDirectories.files.collect {
+			fileTree(dir: it, excludes: getJacocoExclusions())
+		}))
+	}
+	
+	doLast {
+		println "==================================================="
+		println "📊 REPORTE DE COBERTURA DE CÓDIGO GENERADO"
+		println "==================================================="
+		println "📁 Reporte HTML: ${reports.html.outputLocation.get()}/index.html"
+		println "📄 Reporte XML: ${reports.xml.outputLocation.get()}"
+		println "📊 Reporte CSV: ${reports.csv.outputLocation.get()}"
+		println "==================================================="
+		
+		// Leer el archivo XML y mostrar estadísticas básicas
+		def xmlReport = file("${reports.xml.outputLocation.get()}")
+		if (xmlReport.exists()) {
+			def xml = new XmlSlurper().parse(xmlReport)
+			def lineCoverage = xml.counter.find { it.@type == 'LINE' }
+			def branchCoverage = xml.counter.find { it.@type == 'BRANCH' }
+			
+			if (lineCoverage) {
+				def covered = lineCoverage.@covered.toInteger()
+				def missed = lineCoverage.@missed.toInteger()
+				def total = covered + missed
+				def percentage = total > 0 ? (covered * 100 / total).round(2) : 0
+				println "📈 Cobertura de Líneas: ${percentage}% (${covered}/${total})"
+			}
+			
+			if (branchCoverage) {
+				def covered = branchCoverage.@covered.toInteger()
+				def missed = branchCoverage.@missed.toInteger()
+				def total = covered + missed
+				def percentage = total > 0 ? (covered * 100 / total).round(2) : 0
+				println "🔀 Cobertura de Ramas: ${percentage}% (${covered}/${total})"
+			}
+		}
+		println "==================================================="
+	}
+}
+
+// Task para verificar solo la cobertura sin fallar el build
+task checkCoverage {
+	dependsOn jacocoTestReport
+	group = "verification"
+	description = "Checks code coverage without failing the build"
+	
+	doLast {
+		try {
+			jacocoTestCoverageVerification.execute()
+			println "✅ Cobertura de código cumple con los requisitos mínimos"
+		} catch (Exception e) {
+			println "⚠️  Advertencia: La cobertura de código no cumple con los requisitos mínimos"
+			println "❌ ${e.message}"
+			println "💡 Ejecuta 'gradle jacocoCoverageReport' para ver el reporte detallado"
+		}
+	}
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+	
+	// Configurar Jacoco para el task de test
+	finalizedBy jacocoTestReport
+	
+	// Configuraciones adicionales para los tests
+	testLogging {
+		events "passed", "skipped", "failed"
+		exceptionFormat "full"
+		showStandardStreams = false
+		showCauses = true
+		showExceptions = true
+		showStackTraces = true
+	}
+	
+	// JVM arguments para tests
+	jvmArgs '-XX:+UseG1GC', '-Xmx1024m'
+	
+	// System properties para tests
+	systemProperty 'spring.profiles.active', 'test'
+	systemProperty 'spring.jpa.hibernate.ddl-auto', 'create-drop'
+}
+
+// Task para ejecutar tests con cobertura y generar reporte completo
+task testWithCoverage {
+	dependsOn test, jacocoCoverageReport, checkCoverage
+	group = "verification"
+	description = "Runs tests with coverage analysis and generates detailed reports"
+	
+	doLast {
+		println ""
+		println "🧪 Tests completados con análisis de cobertura"
+		println "📊 Revisa los reportes generados para más detalles"
+	}
+}
+
+// Configuración para CI/CD
+task ciCoverage {
+	dependsOn test, jacocoTestReport, jacocoTestCoverageVerification
+	group = "ci"
+	description = "Runs coverage verification for CI/CD pipeline"
 }

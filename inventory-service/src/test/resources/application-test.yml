@@ -1,0 +1,274 @@
+# Configuración específica para pruebas unitarias e integración
+spring:
+  profiles:
+    active: test
+
+  # Base de datos en memoria para pruebas
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+    hikari:
+      pool-name: TestHikariPool
+      minimum-idle: 1
+      maximum-pool-size: 5
+      idle-timeout: 30000
+      connection-timeout: 10000
+      max-lifetime: 60000
+
+  # Configuración JPA para pruebas
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        dialect: org.hibernate.dialect.H2Dialect
+        jdbc:
+          batch_size: 10
+    defer-datasource-initialization: true
+    open-in-view: false
+
+  # Configuración H2 Console para debugging
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # Jackson para pruebas
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: true
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+    time-zone: UTC
+
+  # Kafka embebido para pruebas
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      retries: 1
+      batch-size: 1024
+      linger-ms: 0
+      buffer-memory: 1048576
+      acks: all
+      enable-idempotence: true
+    consumer:
+      group-id: inventory-service-test-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        spring.json.trusted.packages: "com.example.inventory.event,com.example.products.event"
+    listener:
+      ack-mode: manual
+      concurrency: 1
+      poll-timeout: 1000
+
+  # Cache simple para pruebas
+  cache:
+    type: simple
+    cache-names: product-info
+
+  # Seguridad básica para pruebas
+  security:
+    user:
+      name: test-admin
+      password: test123
+
+# Configuración específica de la aplicación para pruebas
+app:
+  name: "Inventory Microservice Test"
+  version: "1.0.0-TEST"
+  description: "Microservicio de gestion de inventario - Entorno de Pruebas"
+
+  kafka:
+    topics:
+      inventory-events: test-inventory-events
+      purchase-events: test-purchase-events
+      stock-alerts: test-stock-alerts
+
+  products-service:
+    base-url: http://localhost:8081
+    api-key: test-products-key
+    timeout:
+      connect: 1000
+      read: 2000
+    retry:
+      max-attempts: 2
+      delay: 500
+
+  security:
+    api-key: test-inventory-key
+    enabled: false # Deshabilitado para pruebas
+
+  cache:
+    product-info:
+      ttl: 60 # 1 minuto para pruebas
+      max-size: 100
+
+  stock:
+    alerts:
+      enabled: true
+      low-stock-threshold-percentage: 20
+      check-interval: 10000 # 10 segundos para pruebas
+
+# Actuator para pruebas
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+  health:
+    defaults:
+      enabled: false
+    ping:
+      enabled: true
+    diskspace:
+      enabled: false
+    db:
+      enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: false
+  info:
+    env:
+      enabled: true
+
+# Configuración de logging para pruebas
+logging:
+  level:
+    root: WARN
+    com.example.inventory: DEBUG
+    org.springframework.kafka: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.springframework.test: INFO
+    org.testcontainers: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: target/test-logs/inventory-service-test.log
+
+# Resilience4j para pruebas (configuración más agresiva)
+resilience4j:
+  circuitbreaker:
+    instances:
+      productService:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 1000 # 1 segundo para pruebas
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - org.springframework.web.client.ResourceAccessException
+  retry:
+    instances:
+      productService:
+        max-attempts: 2
+        wait-duration: 100
+        retry-exceptions:
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+  timelimiter:
+    instances:
+      productService:
+        timeout-duration: 1s
+
+# OpenAPI/Swagger para pruebas
+springdoc:
+  api-docs:
+    enabled: false # Deshabilitado para pruebas
+  swagger-ui:
+    enabled: false # Deshabilitado para pruebas
+
+---
+# Configuración específica para pruebas de integración
+spring:
+  config:
+    activate:
+      on-profile: integration-test
+
+  # Usar TestContainers para PostgreSQL en pruebas de integración
+  datasource:
+    url: jdbc:tc:postgresql:13:///testdb
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+
+  # Kafka con TestContainers
+  kafka:
+    bootstrap-servers: localhost:9093 # Será sobrescrito por TestContainers
+
+# Configuración específica para las pruebas de rendimiento
+---
+spring:
+  config:
+    activate:
+      on-profile: performance-test
+
+app:
+  stock:
+    alerts:
+      check-interval: 1000 # 1 segundo para pruebas de rendimiento
+
+  cache:
+    product-info:
+      ttl: 10 # 10 segundos para pruebas de rendimiento
+      max-size: 50
+
+logging:
+  level:
+    root: ERROR
+    com.example.inventory: INFO
+    org.springframework.kafka: WARN
+
+---
+# Configuración para pruebas con circuit breaker
+spring:
+  config:
+    activate:
+      on-profile: circuit-breaker-test
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      productService:
+        failure-rate-threshold: 10 # Muy bajo para activar rápido
+        wait-duration-in-open-state: 100
+        sliding-window-size: 2
+        minimum-number-of-calls: 1
+        permitted-number-of-calls-in-half-open-state: 1
+
+---
+# Configuración para pruebas de cache
+spring:
+  config:
+    activate:
+      on-profile: cache-test
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=10,expireAfterWrite=1s
+
+app:
+  cache:
+    product-info:
+      ttl: 1 # 1 segundo para testing
+      max-size: 10
