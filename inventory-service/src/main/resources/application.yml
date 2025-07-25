@@ -1,0 +1,234 @@
+server:
+  port: 8082
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: inventory-service
+  
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  
+  datasource:
+    url: jdbc:postgresql://${INVENTORY_DB_HOST:localhost}:${VDB_PORT:5433}/${INVENTORY_DB_NAME:inventory_db}
+    username: ${INVENTORY_DB_USER:inventory_user}
+    password: ${INVENTORY_DB_PASSWORD:inventory_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: InventoryHikariPool
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 600000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        generate_statistics: false
+    open-in-view: false
+  
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: true
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+    time-zone: UTC
+  
+  kafka:
+    bootstrap-servers: ${KAFKA_HOST:localhost}:${KAFKA_PORT:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      retries: 3
+      batch-size: 16384
+      linger-ms: 5
+      buffer-memory: 33554432
+      acks: all
+      enable-idempotence: true
+      properties:
+        max.in.flight.requests.per.connection: 5
+        retry.backoff.ms: 1000
+    consumer:
+      group-id: inventory-service-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        spring.json.trusted.packages: com.example.inventory.event,com.example.products.event
+        session.timeout.ms: 30000
+        heartbeat.interval.ms: 3000
+    listener:
+      ack-mode: manual
+      concurrency: 3
+      poll-timeout: 3000
+
+  security:
+    user:
+      name: ${API_SECURITY_USERNAME:admin}
+      password: ${API_SECURITY_PASSWORD:admin123}
+
+app:
+  name: "Inventory Microservice"
+  version: "1.0.0"
+  description: "Microservicio de gestion de inventario"
+  
+  kafka:
+    topics:
+      inventory-events: inventory-events
+      purchase-events: purchase-events
+      stock-alerts: stock-alerts
+  
+  products-service:
+    base-url: ${PRODUCTS_SERVICE_URL:http://localhost:8081}
+    api-key: ${PRODUCTS_API_KEY:default-products-key}
+    timeout:
+      connect: 5000
+      read: 10000
+    retry:
+      max-attempts: 3
+      delay: 1000
+  
+  security:
+    api-key: ${INVENTORY_API_KEY:default-inventory-key}
+    enabled: true
+  
+  cache:
+    product-info:
+      ttl: 300 # 5 minutos
+      max-size: 1000
+  
+  stock:
+    alerts:
+      enabled: true
+      low-stock-threshold-percentage: 20
+      check-interval: 3600000 # 1 hora en milisegundos
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    diskspace:
+      enabled: true
+    db:
+      enabled: true
+    kafka:
+      enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.9,0.95,0.99
+      sla:
+        http.server.requests: 100ms,200ms,300ms,500ms,1s
+  info:
+    env:
+      enabled: true
+    build:
+      enabled: true
+    git:
+      enabled: true
+      mode: full
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.example.inventory: DEBUG
+    org.springframework.kafka: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n"
+  file:
+    name: ${LOGS_INVENTORY_PATH:/app/logs}/inventory-service.log
+    max-size: 100MB
+    max-history: 30
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      productService:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30000
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - org.springframework.web.client.ResourceAccessException
+  retry:
+    instances:
+      productService:
+        max-attempts: 3
+        wait-duration: 1000
+        retry-exceptions:
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+  timelimiter:
+    instances:
+      productService:
+        timeout-duration: 10s
+
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    try-it-out-enabled: true
+    display-request-duration: true
+    groups-order: DESC
+    operations-sorter: method
+    disable-swagger-default-url: true
+  show-actuator: true
+  group-configs:
+    - group: inventory-api
+      display-name: "Inventory API"
+      paths-to-match:
+        - /api/v1/inventory/**
+        - /api/v1/purchases/**
+  info:
+    title: "Inventory Microservice API"
+    description: "API para gestion de inventario y compras"
+    version: "1.0.0"
+    contact:
+      name: "Inventory Team"
+      email: "inventory-team@company.com"
+    license:
+      name: "MIT License"
+      url: "https://opensource.org/licenses/MIT"
